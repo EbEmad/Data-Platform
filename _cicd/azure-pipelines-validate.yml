@@ -1,0 +1,145 @@
+trigger: none
+
+stages:
+
+- stage: onDevPR
+  variables:
+    - group: DevVariables
+  condition: |
+    eq(variables['System.PullRequest.targetBranchName'], 'dev')
+  jobs:
+  - job: DevValidateJob
+    pool:
+      vmImage: 'ubuntu-20.04'
+
+    steps:
+    - script: env | sort
+      displayName: 'Environment / Context'
+    
+    - task: UsePythonVersion@0
+      displayName: 'Use Python 3.10'
+      inputs:
+        versionSpec: 3.10
+    
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: devops_sp_connection
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "Getting access token..."
+          DATABRICKS_TOKEN=$(az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d --query "accessToken" -o tsv)
+          echo "##vso[task.setvariable variable=DATABRICKS_TOKEN]$DATABRICKS_TOKEN"
+        
+    - checkout: self
+      displayName: 'Checkout & Build.Reason: $(Build.Reason) & Build.SourceBranchName: $(Build.SourceBranchName)'
+
+    - script: |
+            python -m pip install wheel
+            python -m pip install -r requirements.txt
+      displayName: 'Install dependencies' 
+
+    - script: |
+            pytest tests/ -p no:warnings
+      env:
+        DATABRICKS_HOST: $(DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+      displayName: 'Run tests'
+      
+    - script: |
+        echo Install the Databricks CLI...
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      displayName: 'Install the Databricks CLI'
+    
+    - script: |
+        echo Configuring the Databricks CLI...
+        databricks configure --token
+        echo -e "[DATABRICKS_HOST]\n[DATABRICKS_TOKEN]" | databricks configure --token
+      env:
+        DATABRICKS_HOST: $(DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+      displayName: 'Configuring the Databricks CLI'
+
+    - script: |
+        databricks bundle validate -t $(env)
+      displayName: Validate bundle for $(env) enviroment
+      
+- stage: toStaging
+  variables:
+    - group: StgVariables
+  condition: |
+    eq(variables['System.PullRequest.targetBranchName'], 'main')
+  dependsOn: onDevPR
+  jobs:
+  - job: toStagingJob
+    pool:
+      vmImage: 'ubuntu-20.04'
+
+    steps:
+    - script: env | sort
+      displayName: 'Environment / Context'
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python 3.10'
+      inputs:
+        versionSpec: 3.10
+
+    - checkout: self
+      persistCredentials: true
+      clean: true
+      displayName: 'Checkout & Build.Reason: $(Build.Reason) & Build.SourceBranchName: $(Build.SourceBranchName)'
+
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: devops_sp_connection
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "Getting access token..."
+          DATABRICKS_TOKEN=$(az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d --query "accessToken" -o tsv)
+          echo "##vso[task.setvariable variable=DATABRICKS_TOKEN]$DATABRICKS_TOKEN"
+
+    - script: |
+          python -m pip install wheel
+          python -m pip install -r requirements.txt
+      displayName: 'Install dependencies' 
+
+    - script: |
+            pytest tests/ -p no:warnings
+      env:
+        DATABRICKS_HOST: $(DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+      displayName: 'Run tests'
+
+    - script: |
+        echo Install the Databricks CLI...
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      displayName: 'Install the Databricks CLI'
+    
+    - script: |
+        echo Configuring the Databricks CLI...
+        databricks configure --token
+        echo -e "[DATABRICKS_HOST]\n[DATABRICKS_TOKEN]" | databricks configure --token
+      env:
+        DATABRICKS_HOST: $(DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+      displayName: Configuring the Databricks CLI'
+
+    - script: |
+        databricks bundle validate -t $(env)
+      displayName: Validate bundle for $(env) enviroment
+
+    - script: |
+        echo Deploy the bundle via Databricks CLI...
+        databricks bundle deploy -t $(env)
+      displayName: Deploy job on $(env) enviroment
+
+    - script: |
+        echo Running job
+        databricks bundle run notebook_validation_job -t $(env)
+      displayName: Run validation workflow on $(env) enviroment
+
+    # - script: |
+    #     echo Running DLT pipeline
+    #     databricks bundle run bundlesDevOpsDemo_pipeline -t $(env)
+    #   displayName: Run DLT validation workflow on $(env) enviroment
