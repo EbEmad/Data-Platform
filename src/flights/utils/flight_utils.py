@@ -46,6 +46,7 @@ def read_batch(spark, path):
       .schema(schema)
       .load(path)
     )
+    print('hello')
   
     return batch_df
 
