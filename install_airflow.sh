@@ -39,7 +39,7 @@ kubectl get namespace $NAMESPACE &>/dev/null || kubectl create namespace $NAMESP
 
 
 #Apply kubernetes secrets
-# kubectl apply -f k8s/secrets/git-secrets.yaml
+kubectl apply -f k8s/secrets/git-secrets.yaml
 
 # Install or upgrade Airflow using Helm (pinning to stable chart 1.16.0 which uses Airflow 2.10.5)
 helm upgrade --install $RELEASE_NAME "$CHART_FILE" \
